@@ -118,7 +118,7 @@ func getMessagesLimit(urls string, metricsInAmqp int, enableCPUProfile bool) {
 		interval: 10,
 	}
 
-	container := electron.NewContainer(fmt.Sprintf("sa-bench%d", os.Getpid()))
+	container := electron.NewContainer(fmt.Sprintf("telemetry-bench%d", os.Getpid()))
 	url, err := amqp.ParseURL(urls)
 	if err != nil {
 		log.Fatal(err)
@@ -247,7 +247,7 @@ func main() {
 		return
 	}
 
-	container := electron.NewContainer(fmt.Sprintf("sa-bench%d", os.Getpid()))
+	container := electron.NewContainer(fmt.Sprintf("telemetry-bench%d", os.Getpid()))
 	url, err := amqp.ParseURL(urls[0])
 	if err != nil {
 		log.Fatal(err)
