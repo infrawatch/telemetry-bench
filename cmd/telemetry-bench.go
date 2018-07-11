@@ -294,6 +294,7 @@ func main() {
 	// routine for sending mesg
 	waitb.Add(1)
 	countSent := 0
+	countAck := 0
 	go func() {
 		lastCounted := time.Now()
 		addr := strings.TrimPrefix(url.Path, "/")
@@ -310,9 +311,11 @@ func main() {
 				msg.Marshal(body)
 				s.SendAsync(msg, ackChan, body)
 				countSent = countSent + 1
-				if *showTimePerMessages != -1 && countSent%*showTimePerMessages == 0 {
-					fmt.Printf("Sent: %d sent (%v)\n", countSent, time.Now().Sub(lastCounted))
+				if countSent%(*showTimePerMessages+1) == 0 {
 					lastCounted = time.Now()
+				}
+				if *showTimePerMessages != -1 && countSent%*showTimePerMessages == 0 {
+					fmt.Printf("Sent: %d sent, %d ack'd, (%v)\n", countSent, countAck, time.Now().Sub(lastCounted))
 				}
 
 			case <-cancelMesg:
@@ -333,6 +336,8 @@ func main() {
 						out.Value, out.Error)
 				} else if out.Status != electron.Accepted {
 					log.Printf("acknowledgement unexpected status: %v", out.Status)
+				} else {
+					countAck = countAck + 1
 				}
 			case <-cancel:
 				waitb.Done()
