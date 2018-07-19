@@ -31,6 +31,9 @@ import (
 	"sync"
 	"time"
 
+	"net/http"
+	_ "net/http/pprof"
+
 	"qpid.apache.org/amqp"
 	"qpid.apache.org/electron"
 )
@@ -79,19 +82,7 @@ func (m *plugin) GetMetricMessage(nthSend int, msgInJSON int) (msg string) {
 	}
 	msgBuffer = append(msgBuffer, "]"...)
 	return string(msgBuffer)
-	/*
-			msgTemplate := `
-		[{"values": [%f], "dstypes": ["derive"], "dsnames": ["samples"],
-		"time": %f, "interval": 10, "host": "%s", "plugin": "testPlugin",
-		"plugin_instance": "testInstance","type": "%v","type_instance": ""}]
-		`
-			msg = fmt.Sprintf(msgTemplate,
-				rand.Float64(),                           // val
-				float64((time.Now().UnixNano()))/1000000000, // time
-				*m.hostname,                              // host
-				m.name)                                   // type
-			return
-	*/
+
 }
 
 func generateHosts(hostPrefix *string, hostsNum int, pluginNum int, intervalSec int) []host {
@@ -131,7 +122,7 @@ func getMessagesLimit(urls string, metricsInAmqp int, enableCPUProfile bool) {
 		return
 	}
 
-	ackChan := make(chan electron.Outcome)
+	ackChan := make(chan electron.Outcome, 100)
 
 	var waitb sync.WaitGroup
 	startTime := time.Now()
@@ -152,7 +143,7 @@ func getMessagesLimit(urls string, metricsInAmqp int, enableCPUProfile bool) {
 			msg := amqp.NewMessage()
 			body := amqp.Binary(text)
 			msg.Marshal(body)
-			s.SendAsync(msg, ackChan, body)
+			s.SendAsync(msg, nil, body)
 			countSent = countSent + 1
 
 			select {
@@ -206,7 +197,7 @@ func main() {
 	hostsNum := flag.Int("hosts", 1, "Number of hosts to simulate")
 	metricsNum := flag.Int("metrics", 1, "Metrics per AMQP messages")
 	prefixString := flag.String("hostprefix", "", "Host prefix")
-	messagesNum := flag.Int("messages", 1, "Messages per interval")
+	pluginNum := flag.Int("plugins", 1, "Plugins per interval, each plugin generates \"metrics\" (1 default) per interval")
 	intervalSec := flag.Int("interval", 1, "Interval (sec)")
 	metricMaxSend := flag.Int("send", 1, "How many metrics sent")
 	showTimePerMessages := flag.Int("timepermesgs", -1, "Show time for each given messages")
@@ -234,10 +225,14 @@ func main() {
 		}
 		pprof.StartCPUProfile(f)
 		defer pprof.StopCPUProfile()
+	} else {
+		go func() {
+			log.Println(http.ListenAndServe("localhost:6060", nil))
+		}()
 	}
 
 	rand.Seed(time.Now().UnixNano())
-	hosts := generateHosts(prefixString, *hostsNum, *messagesNum, *intervalSec)
+	hosts := generateHosts(prefixString, *hostsNum, *pluginNum, *intervalSec)
 
 	if *modeString == "limit" {
 		getMessagesLimit(urls[0], *metricsNum, *pprofileFileName != "")
@@ -260,35 +255,33 @@ func main() {
 		return
 	}
 
-	ackChan := make(chan electron.Outcome)
-	mesgChan := make(chan string)
+	ackChan := make(chan electron.Outcome, 100)
+	mesgChan := make(chan string, 100)
 
 	var wait sync.WaitGroup
 	var waitb sync.WaitGroup
 	startTime := time.Now()
 	for _, v := range hosts {
-		for _, w := range v.plugins {
-			// uncomment if need to rondom wait
-			/*
-				time.Sleep(time.Millisecond *
-					time.Duration(rand.Int()%1000))
-			*/
-			wait.Add(1)
-			go func(m plugin) {
-				defer wait.Done()
-				for i := 0; ; i++ {
-					if i >= *metricMaxSend &&
-						*metricMaxSend != -1 {
-						break
-					}
-
-					mesgChan <- m.GetMetricMessage(i, *metricsNum)
-					time.Sleep(time.Duration(m.interval) * time.Second)
+		wait.Add(1)
+		go func(m host) {
+			defer wait.Done()
+			for i := 0; ; i++ {
+				if i >= *metricMaxSend &&
+					*metricMaxSend != -1 {
+					break
 				}
-			}(w)
-		}
+				for _, w := range m.plugins {
+					// uncomment if need to rondom wait
+					/*
+						time.Sleep(time.Millisecond *
+							time.Duration(rand.Int()%1000))
+					*/
+					mesgChan <- w.GetMetricMessage(i, *metricsNum)
+				}
+				time.Sleep(time.Duration(*intervalSec) * time.Second)
+			}
+		}(v)
 	}
-
 	cancel := make(chan struct{})
 	cancelMesg := make(chan struct{})
 	// routine for sending mesg
@@ -309,7 +302,7 @@ func main() {
 				msg := amqp.NewMessage()
 				body := amqp.Binary(text)
 				msg.Marshal(body)
-				s.SendAsync(msg, ackChan, body)
+				s.SendAsync(msg, ackChan, countSent)
 				countSent = countSent + 1
 				if countSent%(*showTimePerMessages+1) == 0 {
 					lastCounted = time.Now()
