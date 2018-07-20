@@ -82,7 +82,19 @@ func (m *plugin) GetMetricMessage(nthSend int, msgInJSON int) (msg string) {
 	}
 	msgBuffer = append(msgBuffer, "]"...)
 	return string(msgBuffer)
-
+	/*
+			msgTemplate := `
+		[{"values": [%f], "dstypes": ["derive"], "dsnames": ["samples"],
+		"time": %f, "interval": 10, "host": "%s", "plugin": "testPlugin",
+		"plugin_instance": "testInstance","type": "%v","type_instance": ""}]
+		`
+			msg = fmt.Sprintf(msgTemplate,
+				rand.Float64(),                           // val
+				float64((time.Now().UnixNano()))/1000000000, // time
+				*m.hostname,                              // host
+				m.name)                                   // type
+			return
+	*/
 }
 
 func generateHosts(hostPrefix *string, hostsNum int, pluginNum int, intervalSec int) []host {
@@ -143,7 +155,7 @@ func getMessagesLimit(urls string, metricsInAmqp int, enableCPUProfile bool) {
 			msg := amqp.NewMessage()
 			body := amqp.Binary(text)
 			msg.Marshal(body)
-			s.SendAsync(msg, nil, body)
+			s.SendAsync(msg, ackChan, body)
 			countSent = countSent + 1
 
 			select {
@@ -203,6 +215,7 @@ func main() {
 	showTimePerMessages := flag.Int("timepermesgs", -1, "Show time for each given messages")
 	pprofileFileName := flag.String("pprofile", "", "go pprofile output")
 	modeString := flag.String("mode", "simulate", "Mode (simulate/limit)")
+	verbose := flag.Bool("verbose", false, "Print extra info during test...")
 
 	flag.Usage = usage
 	flag.Parse()
@@ -258,57 +271,83 @@ func main() {
 	ackChan := make(chan electron.Outcome, 100)
 	mesgChan := make(chan string, 100)
 
+	countAck := 0
+	totalSent := 0
+
 	var wait sync.WaitGroup
 	var waitb sync.WaitGroup
 	startTime := time.Now()
-	for _, v := range hosts {
-		wait.Add(1)
-		go func(m host) {
-			defer wait.Done()
-			for i := 0; ; i++ {
-				if i >= *metricMaxSend &&
-					*metricMaxSend != -1 {
-					break
-				}
-				for _, w := range m.plugins {
+	countSent := 0
+
+	wait.Add(1)
+	go func() {
+		defer wait.Done()
+		for i := 0; ; i++ {
+			if i >= *metricMaxSend &&
+				*metricMaxSend != -1 {
+				fmt.Printf("done...\n")
+				break
+			}
+			//			fmt.Printf(".. %d\n", len(mesgChan))
+			start := time.Now()
+			genCount := 0
+			countSent = 0
+			if totalSent > 0 {
+				fmt.Printf("Total sent %d, %d ack'd\n", totalSent, countAck)
+			}
+			for _, v := range hosts {
+				for _, w := range v.plugins {
 					// uncomment if need to rondom wait
 					/*
 						time.Sleep(time.Millisecond *
 							time.Duration(rand.Int()%1000))
 					*/
+					//					fmt.Printf("tt %d\n", len(mesgChan))
 					mesgChan <- w.GetMetricMessage(i, *metricsNum)
+					genCount = genCount + 1
 				}
-				time.Sleep(time.Duration(*intervalSec) * time.Second)
 			}
-		}(v)
-	}
+			duration := (time.Now().Sub(start))
+
+			if *verbose {
+				fmt.Printf("Generated %d metrics in %v\n", genCount, duration/time.Microsecond)
+			}
+			time.Sleep(time.Duration(*intervalSec) * time.Second)
+		}
+	}()
+
 	cancel := make(chan struct{})
 	cancelMesg := make(chan struct{})
 	// routine for sending mesg
 	waitb.Add(1)
-	countSent := 0
-	countAck := 0
 	go func() {
-		lastCounted := time.Now()
 		addr := strings.TrimPrefix(url.Path, "/")
 		s, err := con.Sender(electron.Target(addr), electron.AtMostOnce())
 		if err != nil {
 			log.Fatal(err)
 		}
+		lastCounted := time.Now()
+
 		for {
 			select {
 			case text := <-mesgChan:
-				//fmt.Printf("%s\n", text)
+				if countSent == 0 {
+					lastCounted = time.Now()
+				}
 				msg := amqp.NewMessage()
 				body := amqp.Binary(text)
 				msg.Marshal(body)
-				s.SendAsync(msg, ackChan, countSent)
-				countSent = countSent + 1
-				if countSent%(*showTimePerMessages+1) == 0 {
+				//				fmt.Printf("yy %d\n", len(mesgChan))
+				s.SendAsync(msg, ackChan, totalSent)
+				//				fmt.Printf("zz %d\n", len(mesgChan))
+				totalSent++
+				countSent++
+				if *showTimePerMessages != -1 && countSent == *showTimePerMessages {
+					d := time.Now().Sub(lastCounted)
+					tpm := (d.Seconds() / float64(countSent)) * 1000000
+					fmt.Printf("Sent %d msgs in %v, ( %.3f uS per msg )\n", countSent, d, tpm)
 					lastCounted = time.Now()
-				}
-				if *showTimePerMessages != -1 && countSent%*showTimePerMessages == 0 {
-					fmt.Printf("Sent: %d sent, %d ack'd, (%v)\n", countSent, countAck, time.Now().Sub(lastCounted))
+					countSent = 0
 				}
 
 			case <-cancelMesg:
@@ -347,5 +386,5 @@ func main() {
 	finishedTime := time.Now()
 	duration := finishedTime.Sub(startTime)
 	fmt.Printf("Total: %d sent (duration:%v, mesg/sec: %v, metric/sec: %v)\n",
-		countSent, duration, float64(countSent)/duration.Seconds(), float64(countSent**metricsNum)/duration.Seconds())
+		totalSent, duration, float64(totalSent)/duration.Seconds(), float64(totalSent**metricsNum)/duration.Seconds())
 }
