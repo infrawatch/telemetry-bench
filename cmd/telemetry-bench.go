@@ -216,6 +216,7 @@ func main() {
 	pprofileFileName := flag.String("pprofile", "", "go pprofile output")
 	modeString := flag.String("mode", "simulate", "Mode (simulate/limit)")
 	verbose := flag.Bool("verbose", false, "Print extra info during test...")
+	sendThreads := flag.Int("threads", 1, "How many send threads, defaults to 1")
 
 	flag.Usage = usage
 	flag.Parse()
@@ -272,12 +273,12 @@ func main() {
 	mesgChan := make(chan string, 100)
 
 	countAck := 0
-	totalSent := 0
 
 	var wait sync.WaitGroup
 	var waitb sync.WaitGroup
-	startTime := time.Now()
-	countSent := 0
+
+	sendCount := make([]int, *sendThreads)
+	totalSendCount := make([]int64, *sendThreads)
 
 	wait.Add(1)
 	go func() {
@@ -291,10 +292,16 @@ func main() {
 			//			fmt.Printf(".. %d\n", len(mesgChan))
 			start := time.Now()
 			genCount := 0
-			countSent = 0
-			if totalSent > 0 {
-				fmt.Printf("Total sent %d, %d ack'd\n", totalSent, countAck)
+			var totalSent int64
+			fmt.Printf("Total sent ")
+			for index := 0; index < *sendThreads; index++ {
+				if totalSendCount[index] > 0 {
+					fmt.Printf("(%d)%d, ", index, totalSendCount[index])
+				}
+				sendCount[index] = 0
+				totalSent += totalSendCount[index]
 			}
+			fmt.Printf("total %d, %d ack'd\n", totalSent, countAck)
 			for _, v := range hosts {
 				for _, w := range v.plugins {
 					// uncomment if need to rondom wait
@@ -318,45 +325,47 @@ func main() {
 
 	cancel := make(chan struct{})
 	cancelMesg := make(chan struct{})
-	// routine for sending mesg
-	waitb.Add(1)
-	go func() {
-		addr := strings.TrimPrefix(url.Path, "/")
-		s, err := con.Sender(electron.Target(addr), electron.AtMostOnce())
-		if err != nil {
-			log.Fatal(err)
-		}
-		lastCounted := time.Now()
+	addr := strings.TrimPrefix(url.Path, "/")
+	s, err := con.Sender(electron.Target(addr), electron.AtMostOnce())
 
-		for {
-			select {
-			case text := <-mesgChan:
-				if countSent == 0 {
-					lastCounted = time.Now()
-				}
-				msg := amqp.NewMessage()
-				body := amqp.Binary(text)
-				msg.Marshal(body)
-				//				fmt.Printf("yy %d\n", len(mesgChan))
-				s.SendAsync(msg, ackChan, totalSent)
-				//				fmt.Printf("zz %d\n", len(mesgChan))
-				totalSent++
-				countSent++
-				if *showTimePerMessages != -1 && countSent == *showTimePerMessages {
-					d := time.Now().Sub(lastCounted)
-					tpm := (d.Seconds() / float64(countSent)) * 1000000
-					fmt.Printf("Sent %d msgs in %v, ( %.3f uS per msg )\n", countSent, d, tpm)
-					lastCounted = time.Now()
-					countSent = 0
-				}
+	for index := 0; index < *sendThreads; index++ {
 
-			case <-cancelMesg:
-				waitb.Done()
-				return
+		// routine for sending mesg
+		waitb.Add(1)
+		go func(threadIndex int) {
+			// addr := strings.TrimPrefix(url.Path, "/")
+			// s, err := con.Sender(electron.Target(addr), electron.AtMostOnce())
+			if err != nil {
+				log.Fatal(err)
 			}
-		}
-	}()
+			lastCounted := time.Now()
 
+			for {
+				select {
+				case text := <-mesgChan:
+					if sendCount[threadIndex] == 0 {
+						lastCounted = time.Now()
+					}
+					msg := amqp.NewMessage()
+					body := amqp.Binary(text)
+					msg.Marshal(body)
+					s.SendAsync(msg, ackChan, totalSendCount[threadIndex])
+					totalSendCount[threadIndex]++
+					sendCount[threadIndex]++
+					if *showTimePerMessages != -1 && sendCount[threadIndex] == *showTimePerMessages {
+						d := time.Now().Sub(lastCounted)
+						tpm := (d.Seconds() / float64(sendCount[threadIndex])) * 1000000
+						fmt.Printf("(%d): Sent %d msgs in %v, ( %.3f uS per msg )\n", threadIndex, sendCount[threadIndex], d, tpm)
+						sendCount[threadIndex] = 0
+					}
+
+				case <-cancelMesg:
+					waitb.Done()
+					return
+				}
+			}
+		}(index)
+	}
 	// routine for waiting ack....
 	waitb.Add(1)
 	go func() {
@@ -383,8 +392,5 @@ func main() {
 	close(cancel)
 	waitb.Wait()
 	con.Close(nil)
-	finishedTime := time.Now()
-	duration := finishedTime.Sub(startTime)
-	fmt.Printf("Total: %d sent (duration:%v, mesg/sec: %v, metric/sec: %v)\n",
-		totalSent, duration, float64(totalSent)/duration.Seconds(), float64(totalSent**metricsNum)/duration.Seconds())
+
 }
