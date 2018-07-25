@@ -217,6 +217,7 @@ func main() {
 	modeString := flag.String("mode", "simulate", "Mode (simulate/limit)")
 	verbose := flag.Bool("verbose", false, "Print extra info during test...")
 	sendThreads := flag.Int("threads", 1, "How many send threads, defaults to 1")
+	requireAck := flag.Bool("ack", false, "Require messages to be ack'd ")
 
 	flag.Usage = usage
 	flag.Parse()
@@ -324,7 +325,12 @@ func main() {
 	cancel := make(chan struct{})
 	cancelMesg := make(chan struct{})
 	addr := strings.TrimPrefix(url.Path, "/")
-	s, err := con.Sender(electron.Target(addr), electron.AtMostOnce())
+
+	linkOp := electron.AtMostOnce()
+	if *requireAck == true {
+		linkOp = electron.AtLeastOnce()
+	}
+	s, err := con.Sender(electron.Target(addr), linkOp)
 
 	for index := 0; index < *sendThreads; index++ {
 
