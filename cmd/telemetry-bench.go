@@ -295,9 +295,7 @@ func main() {
 			var totalSent int64
 			fmt.Printf("Total sent ")
 			for index := 0; index < *sendThreads; index++ {
-				if totalSendCount[index] > 0 {
-					fmt.Printf("(%d)%d, ", index, totalSendCount[index])
-				}
+				fmt.Printf("(%d)%d, ", index, totalSendCount[index])
 				sendCount[index] = 0
 				totalSent += totalSendCount[index]
 			}
@@ -314,10 +312,10 @@ func main() {
 					genCount = genCount + 1
 				}
 			}
-			duration := (time.Now().Sub(start))
+			duration := time.Now().Sub(start)
 
 			if *verbose {
-				fmt.Printf("Generated %d metrics in %v\n", genCount, duration/time.Microsecond)
+				fmt.Printf("Generated %d metrics in %v\n", genCount, duration)
 			}
 			time.Sleep(time.Duration(*intervalSec) * time.Second)
 		}
@@ -333,8 +331,6 @@ func main() {
 		// routine for sending mesg
 		waitb.Add(1)
 		go func(threadIndex int) {
-			// addr := strings.TrimPrefix(url.Path, "/")
-			// s, err := con.Sender(electron.Target(addr), electron.AtMostOnce())
 			if err != nil {
 				log.Fatal(err)
 			}
