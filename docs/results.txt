@@ -1,0 +1,8 @@
+Because AMQP link credits are on a per-link basis, multiple go routines don't help that much
+
+Lowest acheived time per message, around 75 uSec 
+Maximum rate, somewhere around 20k per second
+
+AMQP presettled.  Acknowedging each packet is not much slower than sending presettled on low-latency links.
+A lot of flow control packets are already present (link credits) that can be used to piggy-back acks.
+
