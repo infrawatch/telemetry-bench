@@ -271,7 +271,9 @@ func main() {
 	}
 
 	ackChan := make(chan electron.Outcome, 100)
-	mesgChan := make(chan string, 100)
+
+	//	mesgChan := make(chan string, 100)
+	mesgChan := make(chan amqp.Message, 200)
 
 	countAck := 0
 
@@ -309,14 +311,20 @@ func main() {
 							time.Duration(rand.Int()%1000))
 					*/
 					//					fmt.Printf("tt %d\n", len(mesgChan))
-					mesgChan <- w.GetMetricMessage(i, *metricsNum)
+
+					//					mesgChan <- w.GetMetricMessage(i, *metricsNum)
+					msg := amqp.NewMessage()
+					body := amqp.Binary(w.GetMetricMessage(i, *metricsNum))
+					msg.Marshal(body)
+					mesgChan <- msg
+
 					genCount = genCount + 1
 				}
 			}
 			duration := time.Now().Sub(start)
 
 			if *verbose {
-				fmt.Printf("Generated %d metrics in %v\n", genCount, duration)
+				fmt.Printf("Generated %d metrics in %v\n", genCount*(*metricsNum), duration)
 			}
 			time.Sleep(time.Duration(*intervalSec) * time.Second)
 		}
@@ -343,27 +351,34 @@ func main() {
 			lastCounted := time.Now()
 
 			for {
-				select {
-				case text := <-mesgChan:
-					if sendCount[threadIndex] == 0 {
-						lastCounted = time.Now()
-					}
-					msg := amqp.NewMessage()
-					body := amqp.Binary(text)
-					msg.Marshal(body)
-					s.SendAsync(msg, ackChan, totalSendCount[threadIndex])
-					totalSendCount[threadIndex]++
-					sendCount[threadIndex]++
-					if *showTimePerMessages != -1 && sendCount[threadIndex] == *showTimePerMessages {
-						d := time.Now().Sub(lastCounted)
-						tpm := (d.Seconds() / float64(sendCount[threadIndex])) * 1000000
-						fmt.Printf("(%d): Sent %d msgs in %v, ( %.3f uS per msg )\n", threadIndex, sendCount[threadIndex], d, tpm)
-						sendCount[threadIndex] = 0
-					}
+				if len(mesgChan) > 100 {
+					for i := 0; i < 100; i++ {
 
-				case <-cancelMesg:
-					waitb.Done()
-					return
+						select {
+						case msg := <-mesgChan:
+							if sendCount[threadIndex] == 0 {
+								lastCounted = time.Now()
+							}
+							// msg := amqp.NewMessage()
+							// body := amqp.Binary(text)
+							// msg.Marshal(body)
+							s.SendAsync(msg, ackChan, totalSendCount[threadIndex])
+							totalSendCount[threadIndex]++
+							sendCount[threadIndex]++
+							if *showTimePerMessages != -1 && sendCount[threadIndex] == *showTimePerMessages {
+								d := time.Now().Sub(lastCounted)
+								tpm := (d.Seconds() / float64(sendCount[threadIndex]**metricsNum)) * 1000000
+								fmt.Printf("(%d): Sent %d metrics in %v, ( %.3f uS per metric )\n", threadIndex, sendCount[threadIndex]**metricsNum, d, tpm)
+								sendCount[threadIndex] = 0
+							}
+
+						case <-cancelMesg:
+							waitb.Done()
+							return
+						}
+					}
+				} else {
+					time.Sleep(time.Millisecond * 10)
 				}
 			}
 		}(index)
