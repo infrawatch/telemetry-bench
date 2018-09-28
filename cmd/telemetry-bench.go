@@ -234,6 +234,7 @@ func main() {
 	intervalSec := flag.Int("interval", 1, "Interval (sec)")
 	metricMaxSend := flag.Int("send", 1, "How many metrics sent")
 	showTimePerMessages := flag.Int("timepermesgs", -1, "Show time for each given messages")
+	pprofEnable := flag.Bool("profenable", false, "Enable profiling")
 	pprofileFileName := flag.String("pprofile", "", "go pprofile output")
 	modeString := flag.String("mode", "simulate", "Mode (simulate/limit)")
 	verbose := flag.Bool("verbose", false, "Print extra info during test...")
@@ -262,9 +263,11 @@ func main() {
 		pprof.StartCPUProfile(f)
 		defer pprof.StopCPUProfile()
 	} else {
-		go func() {
-			log.Println(http.ListenAndServe("localhost:6060", nil))
-		}()
+		if *pprofEnable == true {
+			go func() {
+				log.Println(http.ListenAndServe("localhost:6060", nil))
+			}()
+		}
 	}
 
 	rand.Seed(time.Now().UnixNano())
