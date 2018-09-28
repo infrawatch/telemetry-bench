@@ -48,9 +48,12 @@ var hostnameTemplate = "hostname%03d"
 var metricsTemplate = "metrics%03d"
 
 type plugin struct {
-	hostname *string
-	name     string
-	interval int
+	hostname        *string
+	name            string
+	interval        int
+	types           int
+	typeInstances   int
+	pluginInstances int
 }
 
 type host struct {
@@ -58,30 +61,40 @@ type host struct {
 	plugins []plugin
 }
 
-func (m *plugin) GetMetricMessage(nthSend int, msgInJSON int) (msg string) {
-	msgBuffer := make([]byte, 0, 1024)
+func (m *plugin) GetMetricMessage() (msgs []string) {
+	buffers := make([]string, m.types*m.typeInstances*m.pluginInstances)
 
-	msgBuffer = append(msgBuffer, "["...)
-	for i := 0; i < msgInJSON; i++ {
-		msgBuffer = append(msgBuffer, "{\"values\": ["...)
-		msgBuffer = append(msgBuffer, strconv.FormatFloat(rand.Float64(), 'f', 4, 64)...)
-		msgBuffer = append(msgBuffer, "], \"dstypes\": [\"derive\"], \"dsnames\": [\"samples\"],"...)
-		msgBuffer = append(msgBuffer, "\"time\": "...)
-		msgBuffer = append(msgBuffer, strconv.FormatFloat(float64((time.Now().UnixNano()))/1000000000, 'f', 4, 64)...)
-		msgBuffer = append(msgBuffer, ", \"interval\": 10, \"host\": \""...)
-		msgBuffer = append(msgBuffer, *m.hostname...)
-		msgBuffer = append(msgBuffer, "\", \"plugin\": \""...)
-		msgBuffer = append(msgBuffer, m.name...)
-		msgBuffer = append(msgBuffer, "\",\"plugin_instance\": \"testInstance"...)
-		msgBuffer = append(msgBuffer, strconv.Itoa(i)...)
-		msgBuffer = append(msgBuffer, "\",\"type\": \"testType"...)
-		msgBuffer = append(msgBuffer, "\",\"type_instance\": \"\"}"...)
-		if i != msgInJSON-1 {
-			msgBuffer = append(msgBuffer, ","...)
+	msgCount := 0
+	for typeCount := 0; typeCount < m.types; typeCount++ {
+		for pluginInstance := 0; pluginInstance < m.pluginInstances; pluginInstance++ {
+			for typeInstance := 0; typeInstance < m.typeInstances; typeInstance++ {
+				msgBuffer := make([]byte, 0, 1024)
+
+				msgBuffer = append(msgBuffer, "["...)
+				msgBuffer = append(msgBuffer, "{\"values\": ["...)
+				msgBuffer = append(msgBuffer, strconv.FormatFloat(rand.Float64(), 'f', 4, 64)...)
+				msgBuffer = append(msgBuffer, "], \"dstypes\": [\"derive\"], \"dsnames\": [\"samples\"],"...)
+				msgBuffer = append(msgBuffer, "\"time\": "...)
+				msgBuffer = append(msgBuffer, strconv.FormatFloat(float64((time.Now().UnixNano()))/1000000000, 'f', 4, 64)...)
+				msgBuffer = append(msgBuffer, ", \"interval\": 10, \"host\": \""...)
+				msgBuffer = append(msgBuffer, *m.hostname...)
+				msgBuffer = append(msgBuffer, "\", \"plugin\": \""...)
+				msgBuffer = append(msgBuffer, m.name...)
+				msgBuffer = append(msgBuffer, "\",\"plugin_instance\": \"plugin_instance"...)
+				msgBuffer = append(msgBuffer, strconv.Itoa(pluginInstance)...)
+				msgBuffer = append(msgBuffer, "\",\"type\": \"type"...)
+				msgBuffer = append(msgBuffer, strconv.Itoa(typeCount)...)
+				msgBuffer = append(msgBuffer, "\",\"type_instance\": \"type_instance"...)
+				msgBuffer = append(msgBuffer, strconv.Itoa(typeInstance)...)
+				msgBuffer = append(msgBuffer, "\"}"...)
+				msgBuffer = append(msgBuffer, "]"...)
+
+				buffers[msgCount] = string(msgBuffer)
+				msgCount++
+			}
 		}
 	}
-	msgBuffer = append(msgBuffer, "]"...)
-	return string(msgBuffer)
+	return buffers
 	/*
 			msgTemplate := `
 		[{"values": [%f], "dstypes": ["derive"], "dsnames": ["samples"],
@@ -97,7 +110,7 @@ func (m *plugin) GetMetricMessage(nthSend int, msgInJSON int) (msg string) {
 	*/
 }
 
-func generateHosts(hostPrefix *string, hostsNum int, pluginNum int, intervalSec int) []host {
+func generateHosts(hostPrefix *string, hostsNum int, pluginNum int, intervalSec int, types int, typeInstances int, pluginInstances int) []host {
 
 	hosts := make([]host, hostsNum)
 	for i := 0; i < hostsNum; i++ {
@@ -108,6 +121,9 @@ func generateHosts(hostPrefix *string, hostsNum int, pluginNum int, intervalSec 
 				fmt.Sprintf(metricsTemplate, j)
 			hosts[i].plugins[j].interval = intervalSec
 			hosts[i].plugins[j].hostname = &hosts[i].name
+			hosts[i].plugins[j].types = types
+			hosts[i].plugins[j].typeInstances = typeInstances
+			hosts[i].plugins[j].pluginInstances = pluginInstances
 		}
 	}
 	return hosts
@@ -151,18 +167,20 @@ func getMessagesLimit(urls string, metricsInAmqp int, enableCPUProfile bool) {
 			log.Fatal(err)
 		}
 		for {
-			text := dummyPlugin.GetMetricMessage(countSent, metricsInAmqp)
-			msg := amqp.NewMessage()
-			body := amqp.Binary(text)
-			msg.Marshal(body)
-			s.SendAsync(msg, ackChan, body)
-			countSent = countSent + 1
+			metrics := dummyPlugin.GetMetricMessage()
+			for _, metric := range metrics {
+				msg := amqp.NewMessage()
+				body := amqp.Binary(metric)
+				msg.Marshal(body)
+				s.SendAsync(msg, ackChan, body)
+				countSent = countSent + 1
 
-			select {
-			case <-cancelMesg:
-				waitb.Done()
-				return
-			default:
+				select {
+				case <-cancelMesg:
+					waitb.Done()
+					return
+				default:
+				}
 			}
 		}
 	}()
@@ -210,6 +228,9 @@ func main() {
 	metricsNum := flag.Int("metrics", 1, "Metrics per AMQP messages")
 	prefixString := flag.String("hostprefix", "", "Host prefix")
 	pluginNum := flag.Int("plugins", 1, "Plugins per interval, each plugin generates \"metrics\" (1 default) per interval")
+	typeNum := flag.Int("typenum", 1, "Number of types per plugins")
+	pluginInstanceNum := flag.Int("plugininstances", 1, "Plugins instances per plugin")
+	typeInstanceNum := flag.Int("typeinstances", 1, "Plugins type instances per plugin")
 	intervalSec := flag.Int("interval", 1, "Interval (sec)")
 	metricMaxSend := flag.Int("send", 1, "How many metrics sent")
 	showTimePerMessages := flag.Int("timepermesgs", -1, "Show time for each given messages")
@@ -247,7 +268,7 @@ func main() {
 	}
 
 	rand.Seed(time.Now().UnixNano())
-	hosts := generateHosts(prefixString, *hostsNum, *pluginNum, *intervalSec)
+	hosts := generateHosts(prefixString, *hostsNum, *pluginNum, *intervalSec, *typeNum, *typeInstanceNum, *pluginInstanceNum)
 
 	if *modeString == "limit" {
 		getMessagesLimit(urls[0], *metricsNum, *pprofileFileName != "")
@@ -313,12 +334,15 @@ func main() {
 					//					fmt.Printf("tt %d\n", len(mesgChan))
 
 					//					mesgChan <- w.GetMetricMessage(i, *metricsNum)
-					msg := amqp.NewMessage()
-					body := amqp.Binary(w.GetMetricMessage(i, *metricsNum))
-					msg.Marshal(body)
-					mesgChan <- msg
+					metrics := w.GetMetricMessage()
+					for _, metric := range metrics {
+						body := amqp.Binary(metric)
+						msg := amqp.NewMessage()
+						msg.Marshal(body)
+						mesgChan <- msg
 
-					genCount = genCount + 1
+						genCount = genCount + 1
+					}
 				}
 			}
 			duration := time.Now().Sub(start)
@@ -362,7 +386,7 @@ func main() {
 							// msg := amqp.NewMessage()
 							// body := amqp.Binary(text)
 							// msg.Marshal(body)
-							s.SendAsync(msg, ackChan, totalSendCount[threadIndex])
+							s.SendAsync(msg, nil, totalSendCount[threadIndex])
 							totalSendCount[threadIndex]++
 							sendCount[threadIndex]++
 							if *showTimePerMessages != -1 && sendCount[threadIndex] == *showTimePerMessages {
