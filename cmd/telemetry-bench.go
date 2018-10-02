@@ -44,6 +44,10 @@ func usage() {
 	flag.PrintDefaults()
 }
 
+var (
+	sleepFunc = func() {} // Default no debugging output
+)
+
 var hostnameTemplate = "hostname%03d"
 var metricsTemplate = "metrics%03d"
 
@@ -225,6 +229,7 @@ func getMessagesLimit(urls string, metricsInAmqp int, enableCPUProfile bool) {
 func main() {
 	// parse command line option
 	hostsNum := flag.Int("hosts", 1, "Number of hosts to simulate")
+	spread := flag.Bool("spread", false, "Spread messages over the interval")
 	metricsNum := flag.Int("metrics", 1, "Metrics per AMQP messages")
 	prefixString := flag.String("hostprefix", "", "Host prefix")
 	pluginNum := flag.Int("plugins", 1, "Plugins per interval, each plugin generates \"metrics\" (1 default) per interval")
@@ -307,6 +312,11 @@ func main() {
 	sendCount := make([]int, *sendThreads)
 	totalSendCount := make([]int64, *sendThreads)
 
+	fmt.Printf("Send %v metrics every %v second(s)", *hostsNum**pluginNum**pluginInstanceNum**typeNum**typeInstanceNum, *intervalSec)
+	if *spread == true {
+		sleepDur := time.Duration((int64(*intervalSec) * int64(time.Second)) / int64(len(hosts)))
+		sleepFunc = func() { time.Sleep(sleepDur) }
+	}
 	wait.Add(1)
 	go func() {
 		defer wait.Done()
@@ -327,7 +337,11 @@ func main() {
 				totalSent += totalSendCount[index]
 			}
 			fmt.Printf("total %d, %d ack'd\n", totalSent, countAck)
+
 			for _, v := range hosts {
+				if *spread == true {
+					sleepFunc()
+				}
 				for _, w := range v.plugins {
 					// uncomment if need to rondom wait
 					/*
@@ -353,7 +367,9 @@ func main() {
 			if *verbose {
 				fmt.Printf("Generated %d metrics in %v\n", genCount*(*metricsNum), duration)
 			}
-			time.Sleep(time.Duration(*intervalSec) * time.Second)
+			if *spread == false {
+				time.Sleep(time.Duration(*intervalSec) * time.Second)
+			}
 		}
 	}()
 
