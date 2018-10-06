@@ -45,19 +45,26 @@ func usage() {
 }
 
 var (
-	sleepFunc = func() {} // Default no debugging output
+	sleepFunc        = func() {} // Default no debugging output
+	startTime        = time.Now()
+	hostnameTemplate = "hostname%03d"
+	metricsTemplate  = "metrics%03d"
 )
 
-var hostnameTemplate = "hostname%03d"
-var metricsTemplate = "metrics%03d"
+type pluginFunc = func() string
+
+//[{"values":[11035,219350],"dstypes":["derive","derive"],"dsnames":["read","write"],"time":1536615315.346,"interval":5.000,"host":"nfvha-compute1-lab-node","plugin":"virt","plugin_instance":"instance-0000002c","type":"disk_ops","type_instance":"vda"}]
 
 type plugin struct {
-	hostname        *string
-	name            string
-	interval        int
-	types           int
-	typeInstances   int
-	pluginInstances int
+	name           string
+	hostname       *string
+	interval       int
+	values         []pluginFunc
+	dstypes        []string
+	dsnames        []string
+	mtype          []string
+	typeInstance   []string
+	pluginInstance []string
 }
 
 type host struct {
@@ -66,68 +73,128 @@ type host struct {
 }
 
 func (m *plugin) GetMetricMessage() (msgs []string) {
-	buffers := make([]string, m.types*m.typeInstances*m.pluginInstances)
+	bufferSize := len(m.mtype) * len(m.typeInstance) * len(m.pluginInstance)
+	buffers := make([]string, bufferSize)
 
 	msgCount := 0
-	for typeCount := 0; typeCount < m.types; typeCount++ {
-		for pluginInstance := 0; pluginInstance < m.pluginInstances; pluginInstance++ {
-			for typeInstance := 0; typeInstance < m.typeInstances; typeInstance++ {
-				msgBuffer := make([]byte, 0, 1024)
+	for typeOffset := 0; typeOffset < cap(m.mtype); typeOffset++ {
+		for pluginInstOffset := 0; pluginInstOffset < cap(m.pluginInstance); pluginInstOffset++ {
+			for typeInstOffset := 0; typeInstOffset < cap(m.typeInstance); typeInstOffset++ {
+				var sb strings.Builder
 
-				msgBuffer = append(msgBuffer, "["...)
-				msgBuffer = append(msgBuffer, "{\"values\": ["...)
-				msgBuffer = append(msgBuffer, strconv.FormatFloat(rand.Float64(), 'f', 4, 64)...)
-				msgBuffer = append(msgBuffer, "], \"dstypes\": [\"derive\"], \"dsnames\": [\"samples\"],"...)
-				msgBuffer = append(msgBuffer, "\"time\": "...)
-				msgBuffer = append(msgBuffer, strconv.FormatFloat(float64((time.Now().UnixNano()))/1000000000, 'f', 4, 64)...)
-				msgBuffer = append(msgBuffer, ", \"interval\": 10, \"host\": \""...)
-				msgBuffer = append(msgBuffer, *m.hostname...)
-				msgBuffer = append(msgBuffer, "\", \"plugin\": \""...)
-				msgBuffer = append(msgBuffer, m.name...)
-				msgBuffer = append(msgBuffer, "\",\"plugin_instance\": \"plugin_instance"...)
-				msgBuffer = append(msgBuffer, strconv.Itoa(pluginInstance)...)
-				msgBuffer = append(msgBuffer, "\",\"type\": \"type"...)
-				msgBuffer = append(msgBuffer, strconv.Itoa(typeCount)...)
-				msgBuffer = append(msgBuffer, "\",\"type_instance\": \"type_instance"...)
-				msgBuffer = append(msgBuffer, strconv.Itoa(typeInstance)...)
-				msgBuffer = append(msgBuffer, "\"}"...)
-				msgBuffer = append(msgBuffer, "]"...)
+				sb.Grow(1024)
 
-				buffers[msgCount] = string(msgBuffer)
+				sb.WriteString("[{\"values\": [")
+				for i := 0; i < len(m.values); i++ {
+					if i > 0 {
+						sb.WriteString(",")
+					}
+					sb.WriteString(m.values[i]())
+				}
+
+				sb.WriteString("], \"dstypes\": [")
+				for i := 0; i < len(m.dstypes); i++ {
+					if i > 0 {
+						sb.WriteString(",")
+					}
+					sb.WriteString("\"")
+					sb.WriteString(m.dstypes[i])
+					sb.WriteString("\"")
+				}
+
+				sb.WriteString("], \"dsnames\": [")
+				for i := 0; i < len(m.dsnames); i++ {
+					if i > 0 {
+						sb.WriteString(",")
+					}
+					sb.WriteString("\"")
+					sb.WriteString(m.dsnames[i])
+					sb.WriteString("\"")
+				}
+
+				sb.WriteString("], \"time\": ")
+				sb.WriteString(strconv.FormatFloat(float64((time.Now().UnixNano()))/1000000000, 'f', 4, 64))
+
+				sb.WriteString(", \"interval\": ")
+				sb.WriteString(strconv.Itoa(m.interval))
+
+				sb.WriteString(", \"host\": \"")
+				sb.WriteString(*m.hostname)
+
+				sb.WriteString("\", \"plugin\": \"")
+				sb.WriteString(m.name)
+
+				sb.WriteString("\",\"plugin_instance\": \"")
+				sb.WriteString(m.pluginInstance[pluginInstOffset])
+
+				sb.WriteString("\",\"type\": \"")
+				sb.WriteString(m.mtype[typeOffset])
+
+				sb.WriteString("\",\"type_instance\": \"")
+				sb.WriteString(m.typeInstance[typeInstOffset])
+
+				sb.WriteString("\"}]")
+
+				buffers[msgCount] = sb.String()
 				msgCount++
 			}
 		}
 	}
 	return buffers
-	/*
-			msgTemplate := `
-		[{"values": [%f], "dstypes": ["derive"], "dsnames": ["samples"],
-		"time": %f, "interval": 10, "host": "%s", "plugin": "testPlugin",
-		"plugin_instance": "testInstance","type": "%v","type_instance": ""}]
-		`
-			msg = fmt.Sprintf(msgTemplate,
-				rand.Float64(),                           // val
-				float64((time.Now().UnixNano()))/1000000000, // time
-				*m.hostname,                              // host
-				m.name)                                   // type
-			return
-	*/
 }
 
-func generateHosts(hostPrefix *string, hostsNum int, pluginNum int, intervalSec int, types int, typeInstances int, pluginInstances int) []host {
+func uptimeFunc() string {
+	uptime := time.Now().Sub(startTime)
 
-	hosts := make([]host, hostsNum)
-	for i := 0; i < hostsNum; i++ {
-		hosts[i].name = *hostPrefix + fmt.Sprintf(hostnameTemplate, i)
-		hosts[i].plugins = make([]plugin, pluginNum)
-		for j := 0; j < pluginNum; j++ {
-			hosts[i].plugins[j].name =
-				fmt.Sprintf(metricsTemplate, j)
+	return strconv.Itoa(int(uptime.Seconds()))
+}
+
+func randomFloatFunc() string {
+	return strconv.FormatFloat(rand.Float64(), 'f', 4, 64)
+}
+
+func generateHosts(hostPrefix *string, numHosts int, numPlugins int, intervalSec int, numTypes int, numTypeInstances int, numPluginInstances int) []host {
+
+	hosts := make([]host, numHosts)
+	for i := 0; i < numHosts; i++ {
+		hName := *hostPrefix + fmt.Sprintf(hostnameTemplate, i)
+		hosts[i].name = hName
+		hosts[i].plugins = make([]plugin, numPlugins+1)
+
+		//
+		// Add uptime plugin simulation for each host
+		//
+		hosts[i].plugins[0] = plugin{
+			values:         []pluginFunc{uptimeFunc},
+			name:           "uptime",
+			hostname:       &hosts[i].name,
+			dstypes:        []string{"gauge"},
+			dsnames:        []string{"value"},
+			interval:       5,
+			pluginInstance: []string{""},
+			mtype:          []string{"uptime"},
+			typeInstance:   []string{""},
+		}
+
+		for j := 1; j < numPlugins; j++ {
+			hosts[i].plugins[j].name = fmt.Sprintf(metricsTemplate, j)
 			hosts[i].plugins[j].interval = intervalSec
 			hosts[i].plugins[j].hostname = &hosts[i].name
-			hosts[i].plugins[j].types = types
-			hosts[i].plugins[j].typeInstances = typeInstances
-			hosts[i].plugins[j].pluginInstances = pluginInstances
+			hosts[i].plugins[j].mtype = make([]string, numTypes)
+			for k := 0; k < numTypes; k++ {
+				hosts[i].plugins[j].mtype[k] = fmt.Sprintf("type%d", k)
+			}
+			hosts[i].plugins[j].typeInstance = make([]string, numTypeInstances)
+			for k := 0; k < numTypes; k++ {
+				hosts[i].plugins[j].typeInstance[k] = fmt.Sprintf("typInst%d", k)
+			}
+			hosts[i].plugins[j].pluginInstance = make([]string, numPluginInstances)
+			for k := 0; k < numTypes; k++ {
+				hosts[i].plugins[j].pluginInstance[k] = fmt.Sprintf("pluginInst%d", k)
+			}
+			hosts[i].plugins[j].values = []pluginFunc{randomFloatFunc}
+			hosts[i].plugins[j].dstypes = []string{"derive"}
+			hosts[i].plugins[j].dsnames = []string{"samples"}
 		}
 	}
 	return hosts
@@ -231,15 +298,15 @@ func main() {
 	hostsNum := flag.Int("hosts", 1, "Number of hosts to simulate")
 	spread := flag.Bool("spread", false, "Spread messages over the interval")
 	metricsNum := flag.Int("metrics", 1, "Metrics per AMQP messages")
-	prefixString := flag.String("hostprefix", "", "Host prefix")
-	pluginNum := flag.Int("plugins", 1, "Plugins per interval, each plugin generates \"metrics\" (1 default) per interval")
-	typeNum := flag.Int("typenum", 1, "Number of types per plugins")
-	pluginInstanceNum := flag.Int("plugininstances", 1, "Plugins instances per plugin")
+	prefixString := flag.String("hostprefix", "", "Host prefix added to the generated hostname000")
+	pluginNum := flag.Int("plugins", 1, "Plugins per per host")
+	typeNum := flag.Int("types", 1, "Number of types per plugins")
+	pluginInstanceNum := flag.Int("instances", 1, "Plugins instances per plugin")
 	typeInstanceNum := flag.Int("typeinstances", 1, "Plugins type instances per plugin")
-	intervalSec := flag.Int("interval", 1, "Interval (sec)")
-	metricMaxSend := flag.Int("send", 1, "How many metrics sent")
-	showTimePerMessages := flag.Int("timepermesgs", -1, "Show time for each given messages")
-	pprofEnable := flag.Bool("profenable", false, "Enable profiling")
+	intervalSec := flag.Int("interval", 1, "Generation interval (sec)")
+	metricMaxSend := flag.Int("send", 1, "How many metrics to send (-1 for continuous)")
+	showTimePerMessages := flag.Int("timepermesgs", -1, "Show time for each TIMEPERMESGS message")
+	pprofEnable := flag.Bool("profenable", false, "Enable profiling and create and API endpoint")
 	pprofileFileName := flag.String("pprofile", "", "go pprofile output")
 	modeString := flag.String("mode", "simulate", "Mode (simulate/limit)")
 	verbose := flag.Bool("verbose", false, "Print extra info during test...")
@@ -318,15 +385,16 @@ func main() {
 		sleepFunc = func() { time.Sleep(sleepDur) }
 	}
 	wait.Add(1)
+
+	// The following function generates AMQP messages and places them on a queue
+	//
 	go func() {
 		defer wait.Done()
 		for i := 0; ; i++ {
-			if i >= *metricMaxSend &&
-				*metricMaxSend != -1 {
+			if i >= *metricMaxSend && *metricMaxSend != -1 {
 				fmt.Printf("done...\n")
 				break
 			}
-			//			fmt.Printf(".. %d\n", len(mesgChan))
 			start := time.Now()
 			genCount := 0
 			var totalSent int64
@@ -348,9 +416,6 @@ func main() {
 						time.Sleep(time.Millisecond *
 							time.Duration(rand.Int()%1000))
 					*/
-					//					fmt.Printf("tt %d\n", len(mesgChan))
-
-					//					mesgChan <- w.GetMetricMessage(i, *metricsNum)
 					metrics := w.GetMetricMessage()
 					for _, metric := range metrics {
 						body := amqp.Binary(metric)
@@ -394,34 +459,24 @@ func main() {
 			lastCounted := time.Now()
 
 			for {
-				if len(mesgChan) > 100 {
-					for i := 0; i < 100; i++ {
-
-						select {
-						case msg := <-mesgChan:
-							if sendCount[threadIndex] == 0 {
-								lastCounted = time.Now()
-							}
-							// msg := amqp.NewMessage()
-							// body := amqp.Binary(text)
-							// msg.Marshal(body)
-							s.SendAsync(msg, nil, totalSendCount[threadIndex])
-							totalSendCount[threadIndex]++
-							sendCount[threadIndex]++
-							if *showTimePerMessages != -1 && sendCount[threadIndex] == *showTimePerMessages {
-								d := time.Now().Sub(lastCounted)
-								tpm := (d.Seconds() / float64(sendCount[threadIndex]**metricsNum)) * 1000000
-								fmt.Printf("(%d): Sent %d metrics in %v, ( %.3f uS per metric )\n", threadIndex, sendCount[threadIndex]**metricsNum, d, tpm)
-								sendCount[threadIndex] = 0
-							}
-
-						case <-cancelMesg:
-							waitb.Done()
-							return
-						}
+				select {
+				case msg := <-mesgChan:
+					if sendCount[threadIndex] == 0 {
+						lastCounted = time.Now()
 					}
-				} else {
-					time.Sleep(time.Millisecond * 10)
+					s.SendAsync(msg, ackChan, totalSendCount[threadIndex])
+					totalSendCount[threadIndex]++
+					sendCount[threadIndex]++
+					if *showTimePerMessages != -1 && sendCount[threadIndex] == *showTimePerMessages {
+						d := time.Now().Sub(lastCounted)
+						tpm := (d.Seconds() / float64(sendCount[threadIndex]**metricsNum)) * 1000000
+						fmt.Printf("(%d): Sent %d metrics in %v, ( %.3f uS per metric )\n", threadIndex, sendCount[threadIndex]**metricsNum, d, tpm)
+						sendCount[threadIndex] = 0
+					}
+
+				case <-cancelMesg:
+					waitb.Done()
+					return
 				}
 			}
 		}(index)
