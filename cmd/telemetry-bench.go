@@ -176,7 +176,7 @@ func generateHosts(hostPrefix *string, numHosts int, numPlugins int, intervalSec
 			typeInstance:   []string{""},
 		}
 
-		for j := 1; j < numPlugins; j++ {
+		for j := 1; j < numPlugins+1; j++ {
 			hosts[i].plugins[j].name = fmt.Sprintf(metricsTemplate, j)
 			hosts[i].plugins[j].interval = intervalSec
 			hosts[i].plugins[j].hostname = &hosts[i].name
@@ -185,11 +185,11 @@ func generateHosts(hostPrefix *string, numHosts int, numPlugins int, intervalSec
 				hosts[i].plugins[j].mtype[k] = fmt.Sprintf("type%d", k)
 			}
 			hosts[i].plugins[j].typeInstance = make([]string, numTypeInstances)
-			for k := 0; k < numTypes; k++ {
+			for k := 0; k < numTypeInstances; k++ {
 				hosts[i].plugins[j].typeInstance[k] = fmt.Sprintf("typInst%d", k)
 			}
 			hosts[i].plugins[j].pluginInstance = make([]string, numPluginInstances)
-			for k := 0; k < numTypes; k++ {
+			for k := 0; k < numPluginInstances; k++ {
 				hosts[i].plugins[j].pluginInstance[k] = fmt.Sprintf("pluginInst%d", k)
 			}
 			hosts[i].plugins[j].values = []pluginFunc{randomFloatFunc}

@@ -14,8 +14,8 @@ for details.
 
 ## Building from source
 
-    go get -u github.com/redhat-nfvpe/telemetry-bench
-    cd $GOPATH/src/github.com/redhat-nfvpe/telemetry-bench
+    go get -u github.com/redhat-service-assurance/telemetry-bench/...
+    cd $GOPATH/src/github.com/redhat-service-assurance/telemetry-bench
     dep ensure -v -vendor-only
     go build cmd/telemetry-bench.go
 
