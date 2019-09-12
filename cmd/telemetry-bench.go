@@ -388,12 +388,17 @@ func main() {
 		sleepDur := time.Duration((int64(*intervalSec) * int64(time.Second)) / int64(len(hosts)))
 		sleepFunc = func() { time.Sleep(sleepDur) }
 	}
+
 	wait.Add(1)
+	start := make(chan bool, 1) // For synchronizing the start of generating and sending
 
 	// The following function generates AMQP messages and places them on a queue
-	//
+	// after we tell it to start
 	go func() {
 		defer wait.Done()
+
+		<-start // Wait here for the sending thread to be ready
+
 		for i := 0; ; i++ {
 			if i >= *metricMaxSend && *metricMaxSend != -1 {
 				fmt.Printf("done...\n")
@@ -452,8 +457,12 @@ func main() {
 	}
 	s, err := con.Sender(electron.Target(addr), linkOp)
 
-	for index := 0; index < *sendThreads; index++ {
+	// Send a blank message to prime the pipe
+	// See https://github.com/redhat-service-assurance/telemetry-bench/issues/6 for details
+	s.SendAsync(amqp.NewMessage(), nil, nil)
 
+	start <- true // Signal to the generator that we're ready to start
+	for index := 0; index < *sendThreads; index++ {
 		// routine for sending mesg
 		waitb.Add(1)
 		go func(threadIndex int) {
