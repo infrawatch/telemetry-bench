@@ -153,30 +153,15 @@ func randomFloatFunc() string {
 	return strconv.FormatFloat(rand.Float64(), 'f', 4, 64)
 }
 
-func generateHosts(hostPrefix *string, numHosts int, numPlugins int, intervalSec int, numTypes int, numTypeInstances int, numPluginInstances int) []host {
+func generateHosts(hostPrefix *string, numHosts int, numPlugins int, intervalSec int, numTypes int, numTypeInstances int, numPluginInstances int, uptimeEnable bool) []host {
 
 	hosts := make([]host, numHosts)
 	for i := 0; i < numHosts; i++ {
 		hName := *hostPrefix + fmt.Sprintf(hostnameTemplate, i)
 		hosts[i].name = hName
-		hosts[i].plugins = make([]plugin, numPlugins+1)
+		hosts[i].plugins = make([]plugin, numPlugins)
 
-		//
-		// Add uptime plugin simulation for each host
-		//
-		hosts[i].plugins[0] = plugin{
-			values:         []pluginFunc{uptimeFunc},
-			name:           "uptime",
-			hostname:       &hosts[i].name,
-			dstypes:        []string{"gauge"},
-			dsnames:        []string{"value"},
-			interval:       5,
-			pluginInstance: []string{""},
-			mtype:          []string{"uptime"},
-			typeInstance:   []string{""},
-		}
-
-		for j := 1; j < numPlugins+1; j++ {
+		for j := 0; j < numPlugins; j++ {
 			hosts[i].plugins[j].name = fmt.Sprintf(metricsTemplate, j)
 			hosts[i].plugins[j].interval = intervalSec
 			hosts[i].plugins[j].hostname = &hosts[i].name
@@ -195,6 +180,24 @@ func generateHosts(hostPrefix *string, numHosts int, numPlugins int, intervalSec
 			hosts[i].plugins[j].values = []pluginFunc{randomFloatFunc}
 			hosts[i].plugins[j].dstypes = []string{"derive"}
 			hosts[i].plugins[j].dsnames = []string{"samples"}
+		}
+
+		if uptimeEnable {
+			//
+			// Prepend uptime plugin simulation for each host if requested
+			//
+			uptimePlugin := plugin{
+				values:         []pluginFunc{uptimeFunc},
+				name:           "uptime",
+				hostname:       &hosts[i].name,
+				dstypes:        []string{"gauge"},
+				dsnames:        []string{"value"},
+				interval:       5,
+				pluginInstance: []string{""},
+				mtype:          []string{"uptime"},
+				typeInstance:   []string{""},
+			}
+			hosts[i].plugins = append([]plugin{uptimePlugin}, hosts[i].plugins...)
 		}
 	}
 	return hosts
@@ -312,6 +315,7 @@ func main() {
 	verbose := flag.Bool("verbose", false, "Print extra info during test...")
 	sendThreads := flag.Int("threads", 1, "How many send threads, defaults to 1")
 	requireAck := flag.Bool("ack", false, "Require messages to be ack'd ")
+	uptimeEnable := flag.Bool("uptimeenable", false, "Generate simulated uptime plugin data for each host")
 
 	flag.Usage = usage
 	flag.Parse()
@@ -343,7 +347,7 @@ func main() {
 	}
 
 	rand.Seed(time.Now().UnixNano())
-	hosts := generateHosts(prefixString, *hostsNum, *pluginNum, *intervalSec, *typeNum, *typeInstanceNum, *pluginInstanceNum)
+	hosts := generateHosts(prefixString, *hostsNum, *pluginNum, *intervalSec, *typeNum, *typeInstanceNum, *pluginInstanceNum, *uptimeEnable)
 
 	if *modeString == "limit" {
 		getMessagesLimit(urls[0], *metricsNum, *pprofileFileName != "")
