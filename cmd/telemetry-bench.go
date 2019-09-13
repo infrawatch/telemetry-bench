@@ -315,6 +315,8 @@ func main() {
 	verbose := flag.Bool("verbose", false, "Print extra info during test...")
 	sendThreads := flag.Int("threads", 1, "How many send threads, defaults to 1")
 	requireAck := flag.Bool("ack", false, "Require messages to be ack'd ")
+	startMetricEnable := flag.Bool("startmetricenable", false, "Generate telemetry_bench_expected_metrics metric at start of test")
+	startupWait := flag.Int("startupwait", 5, "Seconds to wait between startup metric and start of test (also helps settle queue timing when no startupmetric is sent)")
 	uptimeEnable := flag.Bool("uptimeenable", false, "Generate simulated uptime plugin data for each host")
 
 	flag.Usage = usage
@@ -383,7 +385,7 @@ func main() {
 	sendCount := make([]int, *sendThreads)
 	totalSendCount := make([]int64, *sendThreads)
 
-	fmt.Printf("Send %v metrics every %v second(s)", *hostsNum**pluginNum**pluginInstanceNum**typeNum**typeInstanceNum, *intervalSec)
+	fmt.Printf("Send %v metrics every %v second(s)\n", *hostsNum**pluginNum**pluginInstanceNum**typeNum**typeInstanceNum, *intervalSec)
 	if *spread == true {
 		sleepDur := time.Duration((int64(*intervalSec) * int64(time.Second)) / int64(len(hosts)))
 		sleepFunc = func() { time.Sleep(sleepDur) }
@@ -457,9 +459,26 @@ func main() {
 	}
 	s, err := con.Sender(electron.Target(addr), linkOp)
 
-	// Send a blank message to prime the pipe
+	// Send startup message to prime the pipe and help with evaluating test
 	// See https://github.com/redhat-service-assurance/telemetry-bench/issues/6 for details
-	s.SendAsync(amqp.NewMessage(), nil, nil)
+	if *startMetricEnable {
+		startMetricContent := fmt.Sprintf(`
+		  [{"values": [%d, %d, %d],
+		  "dstypes": ["gauge", "gauge", "gauge"], "dsnames":["expected_metrics_per_interval", "intervals", "interval_length_seconds"], "time": %d, "interval": %d,
+		  "host": "%s", "plugin": "telemetry_bench", "plugin_instance": "%d",
+		  "type": "%s", "type_instance": "%d"}]`,
+			*hostsNum**pluginNum**pluginInstanceNum**typeNum**typeInstanceNum,
+			*metricMaxSend, *intervalSec,
+			time.Now().Unix(), *intervalSec,
+			os.Getenv("HOSTNAME"), time.Now().Unix()+int64(*startupWait),
+			*modeString, *sendThreads,
+		)
+		msg := amqp.NewMessage()
+		msg.Marshal(amqp.Binary(startMetricContent))
+		s.SendAsync(msg, nil, nil)
+	}
+
+	time.Sleep(time.Duration(*startupWait) * time.Second)
 
 	start <- true // Signal to the generator that we're ready to start
 	for index := 0; index < *sendThreads; index++ {
