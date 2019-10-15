@@ -24,11 +24,6 @@
 #   go-tests = true
 #   unused-packages = true
 
-
-[[constraint]]
-  branch = "go1"
-  name = "qpid.apache.org"
-
 [prune]
   go-tests = true
   unused-packages = true

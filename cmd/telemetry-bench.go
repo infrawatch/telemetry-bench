@@ -20,10 +20,12 @@ under the License.
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
 	"math/rand"
+	"net/url"
 	"os"
 	"runtime/pprof"
 	"strconv"
@@ -34,8 +36,7 @@ import (
 	"net/http"
 	_ "net/http/pprof"
 
-	"qpid.apache.org/amqp"
-	"qpid.apache.org/electron"
+	"pack.ag/amqp"
 )
 
 func usage() {
@@ -203,6 +204,7 @@ func generateHosts(hostPrefix *string, numHosts int, numPlugins int, intervalSec
 	return hosts
 }
 
+/*
 func getMessagesLimit(urls string, metricsInAmqp int, enableCPUProfile bool) {
 	dummyHost := "testHost"
 	dummyPlugin := &plugin{
@@ -212,7 +214,7 @@ func getMessagesLimit(urls string, metricsInAmqp int, enableCPUProfile bool) {
 	}
 
 	container := electron.NewContainer(fmt.Sprintf("telemetry-bench%d", os.Getpid()))
-	url, err := amqp.ParseURL(urls)
+	url, err := amqp.ParseURL(urls) // HERE
 	if err != nil {
 		log.Fatal(err)
 		return
@@ -243,8 +245,8 @@ func getMessagesLimit(urls string, metricsInAmqp int, enableCPUProfile bool) {
 		for {
 			metrics := dummyPlugin.GetMetricMessage()
 			for _, metric := range metrics {
-				msg := amqp.NewMessage()
-				body := amqp.Binary(metric)
+				msg := amqp.NewMessage()  //HERE
+				body := amqp.Binary(metric)  //HERE
 				msg.Marshal(body)
 				s.SendAsync(msg, ackChan, body)
 				countSent = countSent + 1
@@ -288,13 +290,8 @@ func getMessagesLimit(urls string, metricsInAmqp int, enableCPUProfile bool) {
 		pprof.StopCPUProfile()
 	}
 	os.Exit(0)
-	/*
-		close(cancelMesg)
-		close(cancel)
-		waitb.Wait()
-		con.Close(nil)
-	*/
 }
+*/
 
 func main() {
 	// parse command line option
@@ -352,31 +349,40 @@ func main() {
 	hosts := generateHosts(prefixString, *hostsNum, *pluginNum, *intervalSec, *typeNum, *typeInstanceNum, *pluginInstanceNum, *uptimeEnable)
 
 	if *modeString == "limit" {
-		getMessagesLimit(urls[0], *metricsNum, *pprofileFileName != "")
+		//getMessagesLimit(urls[0], *metricsNum, *pprofileFileName != "")
+		fmt.Println("limit testing is currently disabled, sorry. It was useless with such a slow sender, maybe we'll re-enable it if this is fast now!")
 		return
 	} else if *modeString != "simulate" {
 		fmt.Fprintf(os.Stderr, "Invalid mode string (simulate/limit): %s", *modeString)
 		return
 	}
 
-	container := electron.NewContainer(fmt.Sprintf("telemetry-bench%d", os.Getpid()))
-	url, err := amqp.ParseURL(urls[0])
+	u, err := url.Parse(urls[0])
+	endPointURL := u.Scheme + "://" + u.Host
+	amqpAddr := u.Path
+
+	client, err := amqp.Dial(endPointURL)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("Dialing AMQP server:", err)
+		return
+	}
+	defer client.Close()
+
+	session, err := client.NewSession()
+	if err != nil {
+		log.Fatal("Creating AMQP session:", err)
 		return
 	}
 
-	con, err := container.Dial("tcp", url.Host)
+	sender, err := session.NewSender(
+		amqp.LinkTargetAddress(amqpAddr),
+	)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("Creating sender link:", err)
 		return
 	}
 
-	ackChan := make(chan electron.Outcome, 100)
-
-	//	mesgChan := make(chan string, 100)
-	mesgChan := make(chan amqp.Message, 200)
-
+	mesgChan := make(chan *amqp.Message, 200)
 	countAck := 0
 
 	var wait sync.WaitGroup
@@ -422,16 +428,12 @@ func main() {
 					sleepFunc()
 				}
 				for _, w := range v.plugins {
-					// uncomment if need to rondom wait
-					/*
-						time.Sleep(time.Millisecond *
-							time.Duration(rand.Int()%1000))
-					*/
 					metrics := w.GetMetricMessage()
 					for _, metric := range metrics {
-						body := amqp.Binary(metric)
-						msg := amqp.NewMessage()
-						msg.Marshal(body)
+						msg := amqp.NewMessage([]byte(metric))
+						if *requireAck == false {
+							msg.SendSettled = true
+						}
 						mesgChan <- msg
 
 						genCount = genCount + 1
@@ -451,13 +453,7 @@ func main() {
 
 	cancel := make(chan struct{})
 	cancelMesg := make(chan struct{})
-	addr := strings.TrimPrefix(url.Path, "/")
-
-	linkOp := electron.AtMostOnce()
-	if *requireAck == true {
-		linkOp = electron.AtLeastOnce()
-	}
-	s, err := con.Sender(electron.Target(addr), linkOp)
+	ctx := context.Background()
 
 	// Send startup message to prime the pipe and help with evaluating test
 	// See https://github.com/redhat-service-assurance/telemetry-bench/issues/6 for details
@@ -473,9 +469,15 @@ func main() {
 			os.Getenv("HOSTNAME"), time.Now().Unix()+int64(*startupWait),
 			*modeString, *sendThreads,
 		)
-		msg := amqp.NewMessage()
-		msg.Marshal(amqp.Binary(startMetricContent))
-		s.SendAsync(msg, nil, nil)
+		msg := amqp.NewMessage([]byte(startMetricContent))
+		if *requireAck == false {
+			msg.SendSettled = true
+		}
+		err := sender.Send(ctx, msg)
+		if err != nil {
+			log.Fatal("Sending startup AMQP message:", err)
+			return
+		}
 	}
 
 	time.Sleep(time.Duration(*startupWait) * time.Second)
@@ -496,7 +498,7 @@ func main() {
 					if sendCount[threadIndex] == 0 {
 						lastCounted = time.Now()
 					}
-					s.SendAsync(msg, ackChan, totalSendCount[threadIndex])
+					sender.Send(ctx, msg)
 					totalSendCount[threadIndex]++
 					sendCount[threadIndex]++
 					if *showTimePerMessages != -1 && sendCount[threadIndex] == *showTimePerMessages {
@@ -513,31 +515,9 @@ func main() {
 			}
 		}(index)
 	}
-	// routine for waiting ack....
-	waitb.Add(1)
-	go func() {
-		for {
-			select {
-			case out := <-ackChan:
-				if out.Error != nil {
-					log.Fatalf("acknowledgement %v error: %v",
-						out.Value, out.Error)
-				} else if out.Status != electron.Accepted {
-					log.Printf("acknowledgement unexpected status: %v", out.Status)
-				} else {
-					countAck = countAck + 1
-				}
-			case <-cancel:
-				waitb.Done()
-				return
-			}
-		}
-	}()
 
 	wait.Wait()
 	close(cancelMesg)
 	close(cancel)
 	waitb.Wait()
-	con.Close(nil)
-
 }

@@ -2,18 +2,27 @@
 
 
 [[projects]]
-  branch = "go1"
-  name = "qpid.apache.org"
+  digest = "1:cf31692c14422fa27c83a05292eb5cbe0fb2775972e8f1f8446a71549bd8980b"
+  name = "github.com/pkg/errors"
+  packages = ["."]
+  pruneopts = "UT"
+  revision = "ba968bfe8b2f7e042a574c888954fccecfa385b4"
+  version = "v0.8.1"
+
+[[projects]]
+  digest = "1:9e522682cd7756dd88a435b8bfa9ea5a2d3a03263c35fa91da4078b718de39f3"
+  name = "pack.ag/amqp"
   packages = [
-    "amqp",
-    "electron",
-    "proton"
+    ".",
+    "internal/testconn",
   ]
-  revision = "3826a8e5bc9fcebea49379d2c3cb8c73159b4e11"
+  pruneopts = "UT"
+  revision = "7c41f1a1270d0d35b778b09b70c0e3063cd088af"
+  version = "v0.12.3"
 
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "f9c33d8d5dee82f96367e60505f4a747fcb12a68462ab4172e671bd04d73ff55"
+  input-imports = ["pack.ag/amqp"]
   solver-name = "gps-cdcl"
   solver-version = 1
