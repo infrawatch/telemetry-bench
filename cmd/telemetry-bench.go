@@ -144,6 +144,32 @@ func (m *plugin) GetMetricMessage() (msgs []string) {
 	return buffers
 }
 
+//GetEventMessage generate mock collectd event messages
+func (m *plugin) GetEventMessage() (msg []string) {
+	bufferSize := len(m.mtype) * len(m.typeInstance) * len(m.pluginInstance)
+	buffers := make([]string, bufferSize)
+
+	msgMax := cap(m.mtype) * cap(m.pluginInstance) * cap(m.typeInstance)
+	for msgCount := 0; msgCount < msgMax; msgCount++ {
+		var sb strings.Builder
+
+		sb.Grow(1024)
+		sb.WriteString(`[{"labels":{"alertname":"event_interface_if_octets","instance":"`)
+
+		sb.WriteString(*m.hostname)
+		sb.WriteString(`","interface":"lo","severity":"OKAY","service":"`)
+
+		sb.WriteString(m.name)
+		sb.WriteString(`"},"annotations":{"DataSource":"rx","FailureMin":"nan","FailureMax":"nan"},"startsAt":"`)
+
+		sb.WriteString(time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z"))
+		sb.WriteString(`"}]`)
+
+		buffers[msgCount] = sb.String()
+	}
+	return buffers
+}
+
 func uptimeFunc() string {
 	uptime := time.Now().Sub(startTime)
 
@@ -315,6 +341,7 @@ func main() {
 	startMetricEnable := flag.Bool("startmetricenable", false, "Generate telemetry_bench_expected_metrics metric at start of test")
 	startupWait := flag.Int("startupwait", 5, "Seconds to wait between startup metric and start of test (also helps settle queue timing when no startupmetric is sent)")
 	uptimeEnable := flag.Bool("uptimeenable", false, "Generate simulated uptime plugin data for each host")
+	messageType := flag.String("messagetype", "metrics", "options: metrics, events. Default messagetype=metrics")
 
 	flag.Usage = usage
 	flag.Parse()
@@ -428,9 +455,15 @@ func main() {
 					sleepFunc()
 				}
 				for _, w := range v.plugins {
-					metrics := w.GetMetricMessage()
-					for _, metric := range metrics {
-						msg := amqp.NewMessage([]byte(metric))
+					var messages []string
+					if *messageType == "metrics" {
+						messages = w.GetMetricMessage()
+					} else if *messageType == "events" {
+						messages = w.GetEventMessage()
+					}
+
+					for _, message := range messages {
+						msg := amqp.NewMessage([]byte(message))
 						if *requireAck == false {
 							msg.SendSettled = true
 						}
