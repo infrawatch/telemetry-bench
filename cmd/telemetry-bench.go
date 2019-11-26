@@ -144,6 +144,42 @@ func (m *plugin) GetMetricMessage() (msgs []string) {
 	return buffers
 }
 
+//GetEventMessage generate mock collectd event messages
+func (m *plugin) GetEventMessage() (msg []string) {
+	bufferSize := len(m.mtype) * len(m.typeInstance) * len(m.pluginInstance)
+	buffers := make([]string, bufferSize)
+
+	typeMax := cap(m.mtype) * cap(m.typeInstance)
+	for typeIter := 0; typeIter < typeMax; typeIter++ {
+		for pInstance := 0; pInstance < cap(m.pluginInstance); pInstance++ {
+			var sb strings.Builder
+
+			sb.Grow(1024)
+			sb.WriteString(`[
+				{
+					"labels":{
+						"alertname":"event_interface_if_octets",
+						"instance":"` + *m.hostname + `",
+						"` + m.name + `":"` + m.pluginInstance[pInstance] + `",
+						"severity":"OKAY",
+						"service":"collectd"
+					},
+					"annotations":{
+						"summary":"Host ` + *m.hostname + `, plugin ` + m.name + ` (instance ` + m.pluginInstance[pInstance] + `) type if octets: Everything around you that you call life was made up by people that were no smarter than you.",
+						"DataSource":"rx",
+						"FailureMin":"nan",
+						"FailureMax":"nan"
+					},
+					"startsAt":"` + time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z") + `"
+				}
+			]`)
+
+			buffers[typeIter*pInstance] = sb.String()
+		}
+	}
+	return buffers
+}
+
 func uptimeFunc() string {
 	uptime := time.Now().Sub(startTime)
 
@@ -315,6 +351,7 @@ func main() {
 	startMetricEnable := flag.Bool("startmetricenable", false, "Generate telemetry_bench_expected_metrics metric at start of test")
 	startupWait := flag.Int("startupwait", 5, "Seconds to wait between startup metric and start of test (also helps settle queue timing when no startupmetric is sent)")
 	uptimeEnable := flag.Bool("uptimeenable", false, "Generate simulated uptime plugin data for each host")
+	messageType := flag.String("messagetype", "metrics", "options: metrics, events. Default messagetype=metrics")
 
 	flag.Usage = usage
 	flag.Parse()
@@ -428,9 +465,15 @@ func main() {
 					sleepFunc()
 				}
 				for _, w := range v.plugins {
-					metrics := w.GetMetricMessage()
-					for _, metric := range metrics {
-						msg := amqp.NewMessage([]byte(metric))
+					var messages []string
+					if *messageType == "metrics" {
+						messages = w.GetMetricMessage()
+					} else if *messageType == "events" {
+						messages = w.GetEventMessage()
+					}
+
+					for _, message := range messages {
+						msg := amqp.NewMessage([]byte(message))
 						if *requireAck == false {
 							msg.SendSettled = true
 						}
