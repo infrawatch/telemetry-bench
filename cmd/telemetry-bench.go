@@ -149,23 +149,33 @@ func (m *plugin) GetEventMessage() (msg []string) {
 	bufferSize := len(m.mtype) * len(m.typeInstance) * len(m.pluginInstance)
 	buffers := make([]string, bufferSize)
 
-	msgMax := cap(m.mtype) * cap(m.pluginInstance) * cap(m.typeInstance)
-	for msgCount := 0; msgCount < msgMax; msgCount++ {
-		var sb strings.Builder
+	typeMax := cap(m.mtype) * cap(m.typeInstance)
+	for typeIter := 0; typeIter < typeMax; typeIter++ {
+		for pInstance := 0; pInstance < cap(m.pluginInstance); pInstance++ {
+			var sb strings.Builder
 
-		sb.Grow(1024)
-		sb.WriteString(`[{"labels":{"alertname":"event_interface_if_octets","instance":"`)
+			sb.Grow(1024)
+			sb.WriteString(`[
+				{
+					"labels":{
+						"alertname":"event_interface_if_octets",
+						"instance":"` + *m.hostname + `",
+						"` + m.name + `":"` + m.pluginInstance[pInstance] + `",
+						"severity":"OKAY",
+						"service":"collectd"
+					},
+					"annotations":{
+						"summary":"Host ` + *m.hostname + `, plugin ` + m.name + ` (instance ` + m.pluginInstance[pInstance] + `) type if octets: Everything around you that you call life was made up by people that were no smarter than you.",
+						"DataSource":"rx",
+						"FailureMin":"nan",
+						"FailureMax":"nan"
+					},
+					"startsAt":"` + time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z") + `"
+				}
+			]`)
 
-		sb.WriteString(*m.hostname)
-		sb.WriteString(`","interface":"lo","severity":"OKAY","service":"`)
-
-		sb.WriteString(m.name)
-		sb.WriteString(`"},"annotations":{"DataSource":"rx","FailureMin":"nan","FailureMax":"nan"},"startsAt":"`)
-
-		sb.WriteString(time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z"))
-		sb.WriteString(`"}]`)
-
-		buffers[msgCount] = sb.String()
+			buffers[typeIter*pInstance] = sb.String()
+		}
 	}
 	return buffers
 }
