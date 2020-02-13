@@ -8,8 +8,8 @@ metrics JSON.
 ## Building from source
 
 ```shell
-go get -u github.com/redhat-service-assurance/telemetry-bench/...
-cd $GOPATH/src/github.com/redhat-service-assurance/telemetry-bench
+go get -u github.com/infrawatch/telemetry-bench/...
+cd $GOPATH/src/github.com/infrawatch/telemetry-bench
 dep ensure -v -vendor-only
 go build cmd/telemetry-bench.go
 ```
@@ -17,8 +17,8 @@ go build cmd/telemetry-bench.go
 ## Consuming the Docker container
 
 ```shell
-docker pull quay.io/redhat-service-assurance/telemetry-bench
-docker run -it --rm quay.io/redhat-service-assurance/telemetry-bench telemetry-bench
+docker pull quay.io/infrawatch/telemetry-bench
+docker run -it --rm quay.io/infrawatch/telemetry-bench telemetry-bench
 ```
 
 ## Usage

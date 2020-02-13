@@ -499,7 +499,7 @@ func main() {
 	ctx := context.Background()
 
 	// Send startup message to prime the pipe and help with evaluating test
-	// See https://github.com/redhat-service-assurance/telemetry-bench/issues/6 for details
+	// See https://github.com/infrawatch/telemetry-bench/issues/6 for details
 	if *startMetricEnable {
 		startMetricContent := fmt.Sprintf(`
 		  [{"values": [%d, %d, %d],
